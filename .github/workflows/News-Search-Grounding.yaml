@@ -25,4 +25,6 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: |
           chmod +x run_and_push_sh.sh
-          ./run_and_push_sh.sh daily
+          # ./run_and_push_sh.sh daily
+          # ./run_and_push_sh.sh weekly    
+          ./run_and_push_sh.sh custom 30
