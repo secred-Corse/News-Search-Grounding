@@ -23,7 +23,7 @@ api:
     #MODEL_NAME = "gemini-2.0-flash-lite"
     #MODEL_NAME = "gemma-4-31b-it"
     #MODEL_NAME = "gemini-3-flash-preview"
-  model: "gemma-4-31b-it"
+  model: "gemini-1.5-flash"
   
   # 出力トークン上限（モデルごとの上限以下に設定）
   # 10件のJSON出力なら 4000 で十分
