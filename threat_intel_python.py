@@ -167,7 +167,7 @@ class ThreatCollector:
         # Google検索ツールを有効化してモデルを初期化
         self.model = genai.GenerativeModel(
             model_name=model_name,
-            tools=[{'google_search_retrieval': {}}] 
+            tools=[{'google_search': {}}] # 名前を修正
         )
         self.max_tokens = max_tokens
         self.logger = logger
