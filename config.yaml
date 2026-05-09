@@ -1,0 +1,34 @@
+# 監視対象キーワード（追加するだけで監視範囲が広がる）
+keywords:
+  - "LockBit ransomware"
+  - "APT41 China cyberattack"
+  - "Lazarus Group North Korea"
+  - "Cobalt Strike malware"
+  - "zero-day vulnerability"
+  - "MirrorFace Earth Kasha"
+  - "Volt Typhoon"
+  - "政府機関を標的とするAPT"
+  - "ランサムウェア 日本"
+
+# 1キーワードあたり最大何件まで収集するか
+# 大きい値を設定すると複数回API呼び出しが行われる（10件単位でページング）
+max_items_per_keyword: 30
+
+# Anthropic API設定
+api:
+  # モデル一覧：https://docs.claude.com/en/docs/about-claude/models/overview
+  # 候補：
+  #   - claude-sonnet-4-6        （バランス、推奨）★
+  #   - claude-opus-4-7          （高性能、高コスト）
+  #   - claude-haiku-4-5-20251001（高速、低コスト）
+  model: "gemini-1.5-flash"
+  
+  # 出力トークン上限（モデルごとの上限以下に設定）
+  # 10件のJSON出力なら 4000 で十分
+  max_tokens: 4000
+
+# パス設定
+paths:
+  db_path: "db/threats.sqlite"
+  reports_dir: "reports"
+  logs_dir: "logs"
