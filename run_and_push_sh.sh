@@ -28,19 +28,21 @@ cd "${SCRIPT_DIR}"
 
 echo "[$(date)] 収集開始..."
 
-# 2. Python実行（ファイル名を threat_intel_python.py に修正）
+# 2. Python実行
+# python3 を明示的に使い、失敗した場合はスクリプトを中断するように変更
 if [ "${PERIOD}" = "custom" ] && [ -n "${DAYS}" ]; then
-    $PYTHON_BIN threat_intel_python.py --period custom --days "${DAYS}"
+    python3 threat_intel_python.py --period custom --days "${DAYS}" || { echo "Python script failed"; exit 1; }
 else
-    $PYTHON_BIN threat_intel_python.py --period "${PERIOD}"
+    python3 threat_intel_python.py --period "${PERIOD}" || { echo "Python script failed"; exit 1; }
 fi
 
 # 3. 変更をリポジトリに戻す処理
 echo "[$(date)] リポジトリへの反映チェック..."
 
-# dbとreportsディレクトリを明示的に追加
-git add reports/*.md
-git add db/threats.sqlite 2>/dev/null || true
+# ファイルを強制的に追加対象にする (-f オプション)
+# .gitignore にもし reports/ が残っていても、これで確実にステージングできます
+git add -f reports/*.md 2>/dev/null || true
+git add -f db/threats.sqlite 2>/dev/null || true
 
 # 変更がある場合のみコミット
 if ! git diff --cached --quiet; then
