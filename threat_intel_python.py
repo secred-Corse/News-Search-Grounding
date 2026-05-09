@@ -245,36 +245,33 @@ class ThreatCollector:
         )
 
     def _call_api(self, prompt: str) -> list:
-        # Gemini APIの呼び出し
         response = self.model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
                 max_output_tokens=self.max_tokens,
-                temperature=0.1, # 抽出精度のため低めに設定
+                temperature=0.1,
             )
         )
 
-        # JSON抽出処理 (GeminiはMarkdownで返してくることがあるため)
         text = response.text
 
-        # JSON抽出
-        cleaned = re.sub(r"```json|```", "", text).strip()
-        start = cleaned.find("[")
-        end = cleaned.rfind("]")
-        if start == -1 or end == -1 or end < start:
-            return []
-        json_str = cleaned[start:end + 1]
+        # 修正案：正規表現で [ ] の中身をより確実に抽出する
+        match = re.search(r'\[\s*\{.*\}\s*\]', text, re.DOTALL)
+        if not match:
+            # 配列が見つからない場合、念のため全体でパースを試みる
+            cleaned = re.sub(r"```json|```", "", text).strip()
+        else:
+            cleaned = match.group(0)
 
-        # パース（壊れていれば末尾修復）
         try:
-            return json.loads(json_str)
+            return json.loads(cleaned)
         except json.JSONDecodeError:
-            last_brace = json_str.rfind("}")
-            if last_brace == -1:
-                return []
+            # 既存の末尾修復ロジックへ
+            last_brace = cleaned.rfind("}")
+            if last_brace == -1: return []
             try:
-                return json.loads(json_str[:last_brace + 1] + "]")
-            except json.JSONDecodeError:
+                return json.loads(cleaned[:last_brace + 1] + "]")
+            except:
                 return []
 
     @staticmethod
