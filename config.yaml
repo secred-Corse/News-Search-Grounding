@@ -16,12 +16,14 @@ max_items_per_keyword: 30
 
 # Anthropic API設定
 api:
-  # モデル一覧：https://docs.claude.com/en/docs/about-claude/models/overview
-  # 候補：
-  #   - claude-sonnet-4-6        （バランス、推奨）★
-  #   - claude-opus-4-7          （高性能、高コスト）
-  #   - claude-haiku-4-5-20251001（高速、低コスト）
-  model: "gemini-1.5-flash"
+    # 候補：
+    #MODEL_NAME = "gemini-3.1-flash-lite"
+    #MODEL_NAME = "gemini-3.1-flash-lite-preview"
+    #MODEL_NAME = "gemini-2.5-flash"
+    #MODEL_NAME = "gemini-2.0-flash-lite"
+    #MODEL_NAME = "gemma-4-31b-it"
+    #MODEL_NAME = "gemini-3-flash-preview"
+  model: "gemma-4-31b-it"
   
   # 出力トークン上限（モデルごとの上限以下に設定）
   # 10件のJSON出力なら 4000 で十分
