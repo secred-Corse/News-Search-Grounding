@@ -2,7 +2,7 @@ name: Daily Threat Intelligence Pipeline
 
 on:
   schedule:
-    - cron: '0 8 * * 1-5' # 平日朝9時(JST)など
+    - cron: '0 19 * * *' # 平日朝9時(JST)など
   workflow_dispatch: # 手動実行用
 
 jobs:
