@@ -448,7 +448,7 @@ def main():
     # DB・コレクター初期化
     db = ThreatDB(db_path)
     collector = ThreatCollector(
-        model=config["api"]["model"],
+        model_name=config["api"]["model"],  # model= ではなく model_name= に修正
         max_tokens=config["api"].get("max_tokens", 4000),
         logger=logger,
     )
