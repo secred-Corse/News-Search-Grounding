@@ -24,7 +24,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import yaml
-from anthropic import Anthropic
 from dotenv import load_dotenv
 import google.generativeai as genai
 
