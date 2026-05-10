@@ -267,7 +267,7 @@ class ThreatCollector:
         )
 
     def _call_api(self, prompt: str) -> list:
-        max_retries = 1
+        max_retries = 3
         retry_delay = 10  # 500エラー時は少し長めに待機
 
         for attempt in range(max_retries):
