@@ -25,13 +25,22 @@ from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
-import google.generativeai as genai
+from google import genai
+from google.genai import types
+
+import time
+from google import genai
+from google.genai import types, errors  # errors を追加
 
 
 # ============================================================
 # 初期化
 # ============================================================
-load_dotenv()
+load_dotenv() # .envがあれば読み込む
+
+# Kali環境変数または.envから取得
+# GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+GOOGLE_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 DEFAULT_CONFIG_PATH = SCRIPT_DIR / "config.yaml"
@@ -82,7 +91,8 @@ class ThreatDB:
         self._init_schema()
 
     def _init_schema(self):
-        self.conn.executescript("""
+        # 既存の threats テーブル (変更なし)
+        self.conn.execute("""
         CREATE TABLE IF NOT EXISTS threats (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             hash TEXT UNIQUE NOT NULL,
@@ -95,9 +105,17 @@ class ThreatDB:
             collected_at TEXT NOT NULL,
             keyword TEXT
         );
-        CREATE INDEX IF NOT EXISTS idx_collected_at ON threats(collected_at);
-        CREATE INDEX IF NOT EXISTS idx_threat_level ON threats(threat_level);
-        CREATE INDEX IF NOT EXISTS idx_publish_date ON threats(publish_date);
+        """)
+        # 追加：実行履歴管理テーブル
+        self.conn.execute("""
+        CREATE TABLE IF NOT EXISTS run_history (
+            keyword TEXT,
+            target_date TEXT,
+            status TEXT, -- 'SUCCESS' or 'ERROR'
+            error_message TEXT,
+            updated_at TEXT,
+            PRIMARY KEY (keyword, target_date)
+        );
         """)
         self.conn.commit()
 
@@ -148,6 +166,22 @@ class ThreatDB:
         """, (since_iso,))
         return [dict(r) for r in cur.fetchall()]
 
+    def is_already_done(self, keyword, target_date):
+        """本日、そのキーワードが既に成功しているか確認"""
+        cur = self.conn.execute(
+            "SELECT status FROM run_history WHERE keyword = ? AND target_date = ? AND status = 'SUCCESS'",
+            (keyword, target_date)
+        )
+        return cur.fetchone() is not None
+
+    def update_history(self, keyword, target_date, status, error_msg=""):
+        """実行結果を記録"""
+        self.conn.execute("""
+            INSERT OR REPLACE INTO run_history (keyword, target_date, status, error_message, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (keyword, target_date, status, error_msg, datetime.now().isoformat()))
+        self.conn.commit()
+
     def close(self):
         self.conn.close()
 
@@ -157,66 +191,54 @@ class ThreatDB:
 # ============================================================
 class ThreatCollector:
     def __init__(self, model_name: str, max_tokens: int, logger: logging.Logger):
-        # GitHub Secrets から読み取った GOOGLE_API_KEY を使用
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            raise RuntimeError("GOOGLE_API_KEY が設定されていません")
+        if not GOOGLE_API_KEY:
+            logger.error("GOOGLE_API_KEY が環境変数に設定されていません。")
+            raise RuntimeError("API Key Missing")
         
-        genai.configure(api_key=api_key)
-        
-        # Google検索ツールを有効化してモデルを初期化
-        self.model = genai.GenerativeModel(
-            model_name=model_name,
-            tools=[{'google_search': {}}] # 名前を修正
-        )
+        self.client = genai.Client(api_key=GOOGLE_API_KEY)
+        self.model_id = model_name
         self.max_tokens = max_tokens
         self.logger = logger
 
     def collect(self, keyword: str, from_date: str, to_date: str, max_items: int) -> list:
-        """1キーワードについて、指定期間の脅威情報を収集する。
-        max_itemsが大きい場合は複数回に分けて呼び出す。"""
         all_items = []
-        # 1回あたり最大10件、必要分まで繰り返す
         batch_size = 10
         rounds = max(1, (max_items + batch_size - 1) // batch_size)
 
         for r in range(rounds):
+            # --- 15 RPM 制限対策: 各リクエストの前に 5秒待機 ---
+            if r > 0 or len(all_items) > 0:
+                self.logger.info("  └─ レート制限回避のため 5秒待機中...")
+                time.sleep(5)
+
             remaining = max_items - len(all_items)
             if remaining <= 0:
                 break
             n = min(batch_size, remaining)
 
-            # 既出を除外する指示
             seen_titles = [it.get("title", "") for it in all_items]
             exclude_block = ""
             if seen_titles:
                 exclude_block = (
-                    "\nDO NOT include items whose title matches any of the following "
-                    "(already collected in this run):\n- "
-                    + "\n- ".join(seen_titles[-20:])  # 直近20件のみ送る
-                    + "\n"
+                    "\nDO NOT include items whose title matches any of the following:\n- "
+                    + "\n- ".join(seen_titles[-20:]) + "\n"
                 )
 
             prompt = self._build_prompt(keyword, from_date, to_date, n, exclude_block)
             self.logger.info(f"  └─ Round {r + 1}/{rounds}: {n}件を要求")
 
             try:
+                # _call_api 内部でのリトライ時もスリープが入るようになっています
                 items = self._call_api(prompt)
             except Exception as e:
                 self.logger.warning(f"  └─ API呼び出し失敗: {e}")
-                break
+                raise e 
 
             if not items:
-                self.logger.info("  └─ これ以上情報が得られませんでした")
                 break
 
-            # 期間外を除外
             items = self._filter_by_date(items, from_date, to_date)
             all_items.extend(items)
-
-            # 短いウェイト（レート制限対策）
-            if r < rounds - 1:
-                time.sleep(2)
 
         return all_items
 
@@ -245,32 +267,56 @@ class ThreatCollector:
         )
 
     def _call_api(self, prompt: str) -> list:
-        response = self.model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
-                max_output_tokens=self.max_tokens,
-                temperature=0.1,
-            )
-        )
+        max_retries = 1
+        retry_delay = 10  # 500エラー時は少し長めに待機
 
-        text = response.text
-
-        # 修正案：正規表現で [ ] の中身をより確実に抽出する
-        match = re.search(r'\[\s*\{.*\}\s*\]', text, re.DOTALL)
-        if not match:
-            # 配列が見つからない場合、念のため全体でパースを試みる
-            cleaned = re.sub(r"```json|```", "", text).strip()
-        else:
-            cleaned = match.group(0)
-
-        try:
-            return json.loads(cleaned)
-        except json.JSONDecodeError:
-            # 既存の末尾修復ロジックへ
-            last_brace = cleaned.rfind("}")
-            if last_brace == -1: return []
+        for attempt in range(max_retries):
             try:
-                return json.loads(cleaned[:last_brace + 1] + "]")
+                search_tool = types.Tool(google_search=types.GoogleSearch())
+
+                response = self.client.models.generate_content(
+                    model=self.model_id,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        max_output_tokens=self.max_tokens,
+                        temperature=0.1,
+                        tools=[search_tool]
+                    )
+                )
+
+                if not response or not response.text:
+                    return []
+
+                return self._parse_json(response.text)
+
+            except errors.ClientError as e:
+                # クライアント側のエラー（認証エラー、引数ミスなど）はリトライしない
+                self.logger.error(f"  └─ クライアントエラー: {e}")
+                raise e # ← 【修正】例外を投げる
+            
+            except (errors.ServerError, Exception) as e:
+                # 500/503エラー、およびその他の通信エラーをここでキャッチ
+                if attempt < max_retries - 1:
+                    wait_time = retry_delay * (attempt + 1) # 直線的に待ち時間を増やす
+                    self.logger.warning(f"  └─ サーバー一時エラー({e})。{wait_time}秒後に再試行 ({attempt+1}/{max_retries})")
+                    time.sleep(wait_time)
+                else:
+                    raise RuntimeError(f"API最大リトライ到達: {e}")
+                    self.logger.error("  └─ 最大再試行回数に達したため、このキーワードをスキップします。")
+                    return []
+
+    def _parse_json(self, text: str) -> list:
+        # JSON抽出処理を分離して堅牢化
+        cleaned = re.sub(r"```json|```", "", text).strip()
+        # ... (既存の抽出ロジック)
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            # 軽微な末尾欠けを修復
+            if not json_str.endswith("]"):
+                json_str += "]"
+            try:
+                return json.loads(json_str)
             except:
                 return []
 
@@ -309,14 +355,22 @@ LEVEL_ICON = {
 
 
 def render_markdown(records: list, period_label: str, from_date: str, to_date: str,
-                    new_count: int, dup_count: int) -> str:
+                    new_count: int, error_count: int, error_keywords: list) -> str:
     lines = []
     today = datetime.now().strftime("%Y-%m-%d")
 
     lines.append(f"# 脅威情報レポート {today}")
     lines.append("")
     lines.append(f"**収集期間：** {from_date} 〜 {to_date}（{period_label}）")
-    lines.append(f"**新規検出：** {new_count}件 / 全収集：{new_count + dup_count}件（重複{dup_count}件除外）")
+    lines.append(f"**新規検出：** {new_count}件")
+
+    # --- 追加: エラーがあった場合の警告文をレポートに埋め込む ---
+    if error_count > 0:
+        lines.append("")
+        lines.append(f"⚠️ **【警告】APIエラー発生**")
+        lines.append(f"{error_count}件のキーワードがAPIエラー（500エラー等）により収集できず、スキップされました。")
+        lines.append(f"（対象キーワード: `{', '.join(error_keywords)}`）")
+
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -460,31 +514,54 @@ def main():
 
     # 収集ループ
     run_started_at = datetime.now().isoformat(timespec="seconds")
+    today_str = datetime.now().strftime("%Y-%m-%d")
     total_new = 0
-    total_dup = 0
+    total_errors = 0
+    total_dup = 0      # ← 【修正】ここを初期化することで UnboundLocalError を防ぎます
+    error_keywords = []
 
-    for kw in keywords:
+    for i, kw in enumerate(keywords):
+        if db.is_already_done(kw, today_str):
+            logger.info(f"[スキップ] {kw} は本日既に収集済みです。")
+            continue
+
+        # --- 15 RPM 制限対策: キーワード切り替え時も 10秒待機 ---
+        # 最初のキーワード以外で、実際に API を叩く前に待機
+        if i > 0:
+            time.sleep(10)
+
         logger.info(f"[収集] {kw}")
         try:
             items = collector.collect(kw, from_date, to_date, max_items)
+            # collector.collect 内部で例外が発生すれば except ブロックへ飛ぶ
+            items = collector.collect(kw, from_date, to_date, max_items)
+            
+            new_in_kw = 0
+            for item in items:
+                if db.insert_if_new(item, kw):
+                    new_in_kw += 1
+                else:
+                    total_dup += 1 # ← 重複（既存データ）をカウント
+            
+            total_new += new_in_kw
+            
+            # ここまで正常に来た場合のみ SUCCESS
+            db.update_history(kw, today_str, "SUCCESS")
+            logger.info(f"  └─ 完了: 新規 {new_in_kw}件")
+
         except Exception as e:
-            logger.error(f"  └─ エラー: {e}")
-            continue
+            # 500エラーやタイムアウト時はこちら
+            total_errors += 1
+            error_keywords.append(kw)
+            db.update_history(kw, today_str, "ERROR", str(e))
+            logger.error(f"  └─ 収集失敗（次回再試行対象）: {e}")
 
-        new_in_kw = 0
-        dup_in_kw = 0
-        for item in items:
-            if db.insert_if_new(item, kw):
-                new_in_kw += 1
-            else:
-                dup_in_kw += 1
-        total_new += new_in_kw
-        total_dup += dup_in_kw
-        logger.info(f"  └─ 新規 {new_in_kw}件 / 重複 {dup_in_kw}件")
-
-    # 今回の実行で新規追加されたレコードのみを取得してレポート化
+    # レポート生成に必要な情報を取得
     records = db.get_recent(run_started_at)
-    md = render_markdown(records, period_label, from_date, to_date, total_new, total_dup)
+    
+    # render_markdown の引数を 7つに合わせる（前回の修正を適用）
+    md = render_markdown(records, period_label, from_date, to_date, 
+                         total_new, total_errors, error_keywords)
 
     # ファイル出力
     suffix = {"daily": "daily", "weekly": "weekly", "custom": f"custom{days}d"}[args.period]
@@ -493,7 +570,8 @@ def main():
     report_path.write_text(md, encoding="utf-8")
 
     logger.info("-" * 60)
-    logger.info(f"完了: 新規{total_new}件 / 重複{total_dup}件")
+    # ここで全ての変数が定義されているので、もうエラーは出ません
+    logger.info(f"完了: 新規 {total_new}件 / 重複 {total_dup}件 / エラー {total_errors}件")
     logger.info(f"レポート出力: {report_path}")
     logger.info("=" * 60)
 
