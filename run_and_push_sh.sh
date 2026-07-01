@@ -31,9 +31,9 @@ echo "[$(date)] 収集開始..."
 # 2. Python実行
 # python3 を明示的に使い、失敗した場合はスクリプトを中断するように変更
 if [ "${PERIOD}" = "custom" ] && [ -n "${DAYS}" ]; then
-    python3 threat_intel_python.py --period custom --days "${DAYS}" || { echo "Python script failed"; exit 1; }
+    #python3 threat_intel_python.py --period custom --days "${DAYS}" || { echo "Python script failed"; exit 1; }
 else
-    python3 threat_intel_python.py --period "${PERIOD}" || { echo "Python script failed"; exit 1; }
+    #python3 threat_intel_python.py --period "${PERIOD}" || { echo "Python script failed"; exit 1; }
 fi
 
 # 3. 変更をリポジトリに戻す処理
