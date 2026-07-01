@@ -1,0 +1,36 @@
+# 監視対象キーワード（追加するだけで監視範囲が広がる）
+keywords:
+  - "LockBit ransomware"
+  - "APT41 China cyberattack"
+  - "Lazarus Group North Korea"
+  - "Cobalt Strike malware"
+  - "zero-day vulnerability"
+  - "MirrorFace Earth Kasha"
+  - "Volt Typhoon"
+  - "政府機関を標的とするAPT"
+  - "ランサムウェア 日本"
+
+# 1キーワードあたり最大何件まで収集するか
+# 大きい値を設定すると複数回API呼び出しが行われる（10件単位でページング）
+max_items_per_keyword: 30
+
+# Anthropic API設定
+api:
+    # 候補：
+    #MODEL_NAME = "gemini-3.1-flash-lite"
+    #MODEL_NAME = "gemini-3.1-flash-lite-preview"
+    #MODEL_NAME = "gemini-2.5-flash"
+    #MODEL_NAME = "gemini-2.0-flash-lite"
+    #MODEL_NAME = "gemma-4-31b-it"
+    #MODEL_NAME = "gemini-3-flash-preview"
+  model: "gemini-3.1-flash-lite"
+  
+  # 出力トークン上限（モデルごとの上限以下に設定）
+  # 10件のJSON出力なら 4000 で十分
+  max_tokens: 4000
+
+# パス設定
+paths:
+  db_path: "db/threats.sqlite"
+  reports_dir: "reports"
+  logs_dir: "logs"
